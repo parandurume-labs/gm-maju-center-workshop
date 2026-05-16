@@ -8,6 +8,20 @@ const COL_ASSIGNED_TOPIC = 10; // K열
 const COL_ASSIGNED_TABLE = 11; // L열
 const COL_SEND_STATUS = 12;    // M열
 
+// 2부 토의 주제 목록
+const PART2_TOPICS = [
+  "1층 카페&베이커리 (메뉴 추천, 활용도 등)",
+  "2층 팝업스토어 (판로지원, 아이디어 등)",
+  "3층 교육프로그램 (희망 교육 주제)",
+  "3층 체험프로그램 (희망 체험 주제)",
+  "3층 소셜리빙랩 (사회 문제 실험 방식)",
+  "4층 문화기획 (지역예술가 협업 프로그램)",
+  "4층 시민/기업 네트워킹 (네트워킹 아이디어)",
+  "옥상정원 (공간 활용 아이디어)",
+  "회원 꾸러미 구성 (선물 꾸러미, 굿즈)",
+  "회원 멤버십 혜택 (멤버십 운영, 회비)"
+];
+
 /**
  * 1. 폼 제출 시 즉시 실행되는 함수 (신청 완료 및 기본 안내)
  * 설정 방법: Apps Script 왼쪽 메뉴 '트리거(시계 아이콘)' -> 트리거 추가 -> 'onFormSubmit' 선택 -> 이벤트 유형 '양식 제출 시'로 설정
@@ -155,11 +169,68 @@ function sendFinalNoticeWithQR() {
 }
 
 /**
- * 3. 시트 상단에 실행 메뉴 추가 (스크립트를 열지 않고 시트에서 바로 클릭 가능)
+ * 3. 2부 토의용 주제별 의견 수집 폼 자동 생성
+ * 실행 방법: '워크숍 관리' 메뉴 -> '2부 주제별 의견수집 폼 생성' 클릭
+ */
+function createPart2FeedbackForms() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const folder = DriveApp.getFileById(ss.getId()).getParents().next(); // 스프레드시트와 같은 폴더에 생성
+  
+  // 폼 생성 및 시트 연결 결과 저장용 시트 생성
+  let statusSheet = ss.getSheetByName("폼 생성 결과");
+  if (statusSheet) {
+    ss.deleteSheet(statusSheet);
+  }
+  statusSheet = ss.insertSheet("폼 생성 결과");
+  statusSheet.appendRow(["주제", "구글 폼 링크", "응답 확인 시트 이름"]);
+  
+  PART2_TOPICS.forEach(topic => {
+    // 폼 생성
+    const formTitle = `[마주 워크숍] 2부 토의 의견 수집 - ${topic}`;
+    const form = FormApp.create(formTitle);
+    
+    // 질문 추가
+    form.addTextItem().setTitle("성함").setRequired(true);
+    form.addParagraphTextItem().setTitle(`'${topic}'에 대한 소중한 의견을 자유롭게 남겨주세요.`).setRequired(true);
+    
+    // 스프레드시트에 연결 (자동으로 새로운 시트가 생성됨)
+    form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
+    
+    // 생성된 파일 위치 이동 (기본은 내 드라이브 루트)
+    const file = DriveApp.getFileById(form.getId());
+    folder.addFile(file);
+    DriveApp.getRootFolder().removeFile(file);
+    
+    // 결과 기록
+    statusSheet.appendRow([topic, form.getPublishedUrl(), `(확인 필요)`]);
+  });
+  
+  SpreadsheetApp.getUi().alert("2부 주제별 의견 수집 폼 생성이 완료되었습니다.\n'폼 생성 결과' 시트를 확인해 주세요.");
+}
+
+/**
+ * 4. 시트 상단에 실행 메뉴 추가
  */
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   ui.createMenu('🛠️ 워크숍 관리')
     .addItem('최종 안내 및 QR 메일 일괄 발송', 'sendFinalNoticeWithQR')
+    .addSeparator()
+    .addItem('2부 주제별 의견수집 폼 생성', 'createPart2FeedbackForms')
     .addToUi();
+}
+
+/**
+ * [고급] AI 요약 기능 (참고용)
+ * 응답 시트에서 "=AI_SUMMARIZE(범위)" 형태로 사용할 수 있는 사용자 정의 함수 예시입니다.
+ * 실제 사용을 위해서는 Gemini API 키 설정 등이 필요합니다.
+ */
+function AI_SUMMARIZE(contentRange) {
+  if (!contentRange) return "데이터가 없습니다.";
+  
+  // 이 부분에 Gemini API 호출 로직을 넣을 수 있습니다.
+  // 현재는 예시로 데이터의 개수만 반환하거나 간단한 메시지를 보냅니다.
+  const text = Array.isArray(contentRange) ? contentRange.flat().filter(String).join("\n") : contentRange;
+  
+  return "[AI 요약 기능 예시] 의견들을 모아서 분석하는 로직이 여기에 들어갑니다. (API 연동 필요)";
 }
