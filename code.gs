@@ -42,9 +42,12 @@ function parseTopics(topicsRaw) {
 }
 
 /**
- * 1. 폼 제출 시 즉시 실행되는 함수 (신청 완료 및 기본 안내)
+ * 1. 폼 제출 시 즉시 실행되는 함수 (신청 완료 안내 + 배정 컬럼 빈 셀 초기화)
  * 설정 방법: Apps Script 왼쪽 메뉴 '트리거(시계 아이콘)' -> 트리거 추가
  *            -> 함수: onFormSubmit / 이벤트 유형: 양식 제출 시
+ *
+ * [흐름] 응답 제출 → M(배정된 주제)/N(테이블 번호) 빈 셀 생성
+ *        → 주최측이 시트에서 직접 입력 → sendFinalNoticeWithQR 실행
  */
 function onFormSubmit(e) {
   try {
@@ -52,6 +55,33 @@ function onFormSubmit(e) {
     const email = e.values[COL_EMAIL];
 
     if (!email || !email.includes('@')) return;
+
+    // 헤더 초기화 (최초 응답 제출 시 1회 실행)
+    const sheet = e.range.getSheet();
+    const headerRow = sheet.getRange(1, 1, 1, sheet.getLastColumn() + 6).getValues()[0];
+    if (headerRow[COL_ASSIGNED_TOPIC] !== "배정된 주제") {
+      sheet.getRange(1, COL_ASSIGNED_TOPIC + 1).setValue("배정된 주제");
+      sheet.getRange(1, COL_ASSIGNED_TABLE + 1).setValue("테이블 번호");
+      sheet.getRange(1, COL_QR_URL + 1).setValue("QR 코드 URL");
+      sheet.getRange(1, COL_CHECKIN_CODE + 1).setValue("체크인 코드");
+      sheet.getRange(1, COL_CHECKIN_STATUS + 1).setValue("출석 상태");
+      sheet.getRange(1, COL_SEND_STATUS + 1).setValue("최종메일발송상태");
+    }
+
+    // QR 코드는 이름|이메일 기반으로 응답 제출 즉시 생성
+    const checkinCode = `${name}|${email}`;
+    const qrUrl = `https://quickchart.io/qr?text=${encodeURIComponent(checkinCode)}&size=250`;
+
+    // 신청자 행에 M~R열 초기값 일괄 저장
+    const newRow = e.range.getRow();
+    sheet.getRange(newRow, COL_ASSIGNED_TOPIC + 1, 1, 6).setValues([[
+      "",           // M: 배정된 주제 (주최측 직접 입력)
+      "",           // N: 테이블 번호 (주최측 직접 입력)
+      qrUrl,        // O: QR 코드 URL (즉시 생성)
+      checkinCode,  // P: 체크인 코드 (즉시 생성, AppSheet 조회 기준)
+      "",           // Q: 출석 상태 (최종메일 발송 시 N으로 초기화)
+      ""            // R: 최종메일발송상태
+    ]]);
 
     const subject = "[사회연대경제혁신센터] 마주 워크숍 참가 신청이 완료되었습니다.";
     const body = `
@@ -84,8 +114,11 @@ function onFormSubmit(e) {
 }
 
 /**
- * 2. 행사 전날 일괄 실행하는 함수 (주제 배정, 테이블 지정, QR 생성 및 발송)
+ * 2. 행사 전날 일괄 실행하는 함수 (QR 생성 및 최종 안내 발송)
  * 실행 방법: '🛠️ 워크숍 관리' 메뉴 -> '최종 안내 및 QR 메일 일괄 발송' 클릭
+ *
+ * [전제] 시트의 M(배정된 주제)과 N(테이블 번호)을 주최측이 미리 입력해야 합니다.
+ *        비어있는 행은 건너뛰며, 완료 후 미발송 건수를 안내합니다.
  */
 function sendFinalNoticeWithQR() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("설문지 응답 시트1");
@@ -95,51 +128,27 @@ function sendFinalNoticeWithQR() {
   }
 
   const data = sheet.getDataRange().getValues();
-
-  // 첫 번째 행(헤더)에 배정 및 발송 확인용 열 추가 (M~R열)
-  if (data[0][COL_ASSIGNED_TOPIC] !== "배정된 주제") {
-    sheet.getRange(1, COL_ASSIGNED_TOPIC + 1).setValue("배정된 주제");
-    sheet.getRange(1, COL_ASSIGNED_TABLE + 1).setValue("테이블 번호");
-    sheet.getRange(1, COL_QR_URL + 1).setValue("QR 코드 URL");
-    sheet.getRange(1, COL_CHECKIN_CODE + 1).setValue("체크인 코드");
-    sheet.getRange(1, COL_CHECKIN_STATUS + 1).setValue("출석 상태");
-    sheet.getRange(1, COL_SEND_STATUS + 1).setValue("최종메일발송상태");
-  }
-
   let sentCount = 0;
+  let skippedCount = 0;
 
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
-    const name = row[COL_NAME];       // B열: 이름
-    const topicsRaw = row[COL_TOPIC]; // I열: 2부 토의주제
-    const email = row[COL_EMAIL];     // J열: 이메일
-
-    let assignedTopic = row[COL_ASSIGNED_TOPIC]; // M열: 배정된 주제
-    let assignedTable = row[COL_ASSIGNED_TABLE]; // N열: 테이블 번호
-    const isSent = row[COL_SEND_STATUS];         // R열: 발송 상태
+    const name = row[COL_NAME];              // B열: 이름
+    const email = row[COL_EMAIL];            // J열: 이메일
+    const assignedTopic = row[COL_ASSIGNED_TOPIC]; // M열: 배정된 주제 (주최측 입력)
+    const assignedTable = row[COL_ASSIGNED_TABLE]; // N열: 테이블 번호 (주최측 입력)
+    const isSent = row[COL_SEND_STATUS];           // R열: 발송 상태
 
     if (!email || !email.includes('@') || isSent === "발송완료") continue;
 
-    // --- 주제 및 테이블 지정 로직 ---
-    if (!assignedTopic) {
-      // prefix 매칭 방식으로 주제 파싱 (주제명 내부 쉼표 대응)
-      const topicArray = parseTopics(topicsRaw);
-      assignedTopic = topicArray[0];
-
-      // 임시 테이블 번호 1~10 랜덤 배정 (운영 시 시트에서 직접 수정 가능)
-      assignedTable = "Table " + (Math.floor(Math.random() * 10) + 1);
-
-      sheet.getRange(i + 1, COL_ASSIGNED_TOPIC + 1).setValue(assignedTopic);
-      sheet.getRange(i + 1, COL_ASSIGNED_TABLE + 1).setValue(assignedTable);
+    // M 또는 N이 비어있으면 아직 배정이 안 된 것 → 건너뜀
+    if (!assignedTopic || !assignedTable) {
+      skippedCount++;
+      continue;
     }
 
-    // --- QR 코드 생성 ---
-    // checkinCode: QR에 담기는 실제 값 → AppSheet에서 이 값을 스캔해 참가자 행 조회
-    const checkinCode = `${name}|${email}`;
-    const qrUrl = `https://quickchart.io/qr?text=${encodeURIComponent(checkinCode)}&size=250`;
-
-    sheet.getRange(i + 1, COL_QR_URL + 1).setValue(qrUrl);
-    sheet.getRange(i + 1, COL_CHECKIN_CODE + 1).setValue(checkinCode);
+    // QR URL은 응답 제출 시 이미 생성되어 O열에 저장됨
+    const qrUrl = row[COL_QR_URL]; // O열: 응답 제출 시 생성된 QR 이미지 URL
 
     // --- 최종 안내 이메일 발송 ---
     const subject = `[최종안내] 6월9일 마주 워크숍 테이블 배정 및 입장 QR코드 안내`;
@@ -177,7 +186,10 @@ function sendFinalNoticeWithQR() {
     }
   }
 
-  SpreadsheetApp.getUi().alert(`총 ${sentCount}명의 참가자에게 최종 QR 메일 발송을 완료했습니다.`);
+  const msg = skippedCount > 0
+    ? `총 ${sentCount}명에게 최종 QR 메일을 발송했습니다.\n\n⚠️ ${skippedCount}명은 토의주제 또는 테이블 번호(M/N열)가 비어있어 건너뛰었습니다.\n시트에서 배정 후 다시 실행해 주세요.`
+    : `총 ${sentCount}명의 참가자에게 최종 QR 메일 발송을 완료했습니다.`;
+  SpreadsheetApp.getUi().alert(msg);
 }
 
 /**
