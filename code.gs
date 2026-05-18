@@ -1,12 +1,16 @@
 // --- 공통 설정 (Configuration) ---
 const COL_NAME = 1;     // B열: 이름
-const COL_TOPIC = 7;    // H열: 2부 논의주제
+const COL_TOPIC = 8;    // I열: 2부 토의주제
 const COL_EMAIL = 9;    // J열: 이메일
 
-// 저장 위치 (1부터 시작하는 Range 기준이 아닌 0부터 시작하는 배열 기준 인덱스)
-const COL_ASSIGNED_TOPIC = 10; // K열
-const COL_ASSIGNED_TABLE = 11; // L열
-const COL_SEND_STATUS = 12;    // M열
+// 저장 위치 (0부터 시작하는 배열 기준 인덱스)
+// 폼 원본 응답 열: A(타임스탬프)~L(개인정보활용동의여부) = 12개 (인덱스 0~11)
+const COL_ASSIGNED_TOPIC = 12; // M열: 배정된 주제
+const COL_ASSIGNED_TABLE = 13; // N열: 테이블 번호
+const COL_QR_URL = 14;         // O열: QR 코드 이미지 URL (메일 첨부용)
+const COL_CHECKIN_CODE = 15;   // P열: 체크인 코드 (AppSheet QR 스캔 대조용)
+const COL_CHECKIN_STATUS = 16; // Q열: 출석 상태 (AppSheet가 QR 스캔 시 업데이트)
+const COL_SEND_STATUS = 17;    // R열: 최종메일발송상태
 
 // 2부 토의 주제 목록
 const PART2_TOPICS = [
@@ -45,7 +49,7 @@ function onFormSubmit(e) {
           <h3 style="margin-top: 0; color: #0f172a;">[6/9 행사 기본 안내]</h3>
           <ul style="line-height: 1.6; padding-left: 20px; margin-bottom: 0;">
             <li><strong>일시:</strong> 2026년 6월 9일 (화) 오후 2시</li>
-            <li><strong>장소:</strong> 사회연대경제혁신센터 다목적홀</li>
+            <li><strong>장소:</strong> 광명시청 1층 대회의실</li>
             <li><strong>안내:</strong> 본 행사는 1부(특강 및 안내)와 2부(원탁 토의)로 나뉘어 진행됩니다.</li>
           </ul>
         </div>
@@ -81,10 +85,13 @@ function sendFinalNoticeWithQR() {
   
   const data = sheet.getDataRange().getValues();
   
-  // 첫 번째 행(헤더)에 배정 및 발송 확인용 열 추가 (K, L, M열)
-  if (data[0].length <= COL_ASSIGNED_TOPIC) {
+  // 첫 번째 행(헤더)에 배정 및 발송 확인용 열 추가 (M~Q열)
+  if (data[0][COL_ASSIGNED_TOPIC] !== "배정된 주제") {
     sheet.getRange(1, COL_ASSIGNED_TOPIC + 1).setValue("배정된 주제");
     sheet.getRange(1, COL_ASSIGNED_TABLE + 1).setValue("테이블 번호");
+    sheet.getRange(1, COL_QR_URL + 1).setValue("QR 코드 URL");
+    sheet.getRange(1, COL_CHECKIN_CODE + 1).setValue("체크인 코드");
+    sheet.getRange(1, COL_CHECKIN_STATUS + 1).setValue("출석 상태");
     sheet.getRange(1, COL_SEND_STATUS + 1).setValue("최종메일발송상태");
   }
 
@@ -94,12 +101,12 @@ function sendFinalNoticeWithQR() {
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
     const name = row[COL_NAME];       // B열: 이름
-    const topicsRaw = row[COL_TOPIC]; // H열: 2부 토의주제
+    const topicsRaw = row[COL_TOPIC]; // I열: 2부 토의주제
     const email = row[COL_EMAIL];     // J열: 이메일
-    
-    let assignedTopic = row[COL_ASSIGNED_TOPIC]; // K열: 배정된 주제
-    let assignedTable = row[COL_ASSIGNED_TABLE]; // L열: 테이블 번호
-    const isSent = row[COL_SEND_STATUS];         // M열: 발송 상태
+
+    let assignedTopic = row[COL_ASSIGNED_TOPIC]; // M열: 배정된 주제
+    let assignedTable = row[COL_ASSIGNED_TABLE]; // N열: 테이블 번호
+    const isSent = row[COL_SEND_STATUS];         // Q열: 발송 상태
 
     // 이메일이 없거나 유효하지 않거나, 이미 발송된 경우 다음 사람으로 넘어감
     if (!email || !email.includes('@') || isSent === "발송완료") continue;
@@ -118,12 +125,17 @@ function sendFinalNoticeWithQR() {
       sheet.getRange(i + 1, COL_ASSIGNED_TABLE + 1).setValue(assignedTable);
     }
 
-    // --- QR 코드 URL 생성 ---
-    const qrData = encodeURIComponent(`${name}|${email}`);
-    const qrUrl = `https://quickchart.io/qr?text=${qrData}&size=250`;
+    // --- QR 코드 생성 ---
+    // checkinCode: QR에 담기는 실제 값 → AppSheet에서 이 값을 스캔해 참가자 조회
+    const checkinCode = `${name}|${email}`;
+    const qrUrl = `https://quickchart.io/qr?text=${encodeURIComponent(checkinCode)}&size=250`;
+
+    // 시트에 QR URL과 체크인 코드 저장 (AppSheet QR 스캔 대조용)
+    sheet.getRange(i + 1, COL_QR_URL + 1).setValue(qrUrl);
+    sheet.getRange(i + 1, COL_CHECKIN_CODE + 1).setValue(checkinCode);
 
     // --- 최종 안내 이메일 내용 구성 ---
-    const subject = `[최종안내] 내일 마주 워크숍 테이블 배정 및 입장 QR코드 안내`;
+    const subject = `[최종안내] 6월9일 마주 워크숍 테이블 배정 및 입장 QR코드 안내`;
     const body = `
       <div style="font-family: 'Malgun Gothic', sans-serif; max-width: 600px; margin: 0 auto; color: #333; border: 1px solid #ddd; border-radius: 10px; padding: 30px;">
         <h2 style="color: #2563eb; text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 15px;">마주 워크숍 최종 참석 안내</h2>
@@ -144,7 +156,7 @@ function sendFinalNoticeWithQR() {
           <img src="${qrUrl}" alt="출석용 QR코드" style="width: 200px; height: 200px; border: 3px solid #fff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border-radius: 10px;"/>
         </div>
         
-        <p style="text-align: center; font-weight: bold;">내일 행사장(사회연대경제혁신센터 다목적홀)에서 뵙겠습니다.<br>감사합니다.</p>
+        <p style="text-align: center; font-weight: bold;">행사장(광명시청 1층 대회의실)에서 뵙겠습니다.<br>감사합니다.</p>
       </div>
     `;
 
@@ -156,7 +168,8 @@ function sendFinalNoticeWithQR() {
         htmlBody: body
       });
 
-      // 시트에 발송 완료 상태 기록
+      // 시트에 출석 초기값(N) 및 발송 완료 상태 기록
+      sheet.getRange(i + 1, COL_CHECKIN_STATUS + 1).setValue("N");
       sheet.getRange(i + 1, COL_SEND_STATUS + 1).setValue("발송완료");
       sentCount++;
     } catch (err) {
