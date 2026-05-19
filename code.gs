@@ -27,21 +27,6 @@ const PART2_TOPICS = [
 ];
 
 /**
- * 헬퍼: 폼 응답에서 선택된 주제 파싱
- * 구글 폼 체크박스 응답은 쉼표로 구분되지만, 주제명 내부에도 쉼표가 포함될 수 있어
- * 단순 split(',') 대신 PART2_TOPICS의 prefix를 기준으로 매칭한다.
- */
-function parseTopics(topicsRaw) {
-  if (!topicsRaw) return ["미지정 주제"];
-  const raw = topicsRaw.toString();
-  const matched = PART2_TOPICS.filter(topic => {
-    const prefix = topic.split(' (')[0]; // 괄호 앞 핵심 키워드만 추출
-    return raw.includes(prefix);
-  });
-  return matched.length > 0 ? matched : ["미지정 주제"];
-}
-
-/**
  * 1. 폼 제출 시 즉시 실행되는 함수 (신청 완료 안내 + 배정 컬럼 빈 셀 초기화)
  * 설정 방법: Apps Script 왼쪽 메뉴 '트리거(시계 아이콘)' -> 트리거 추가
  *            -> 함수: onFormSubmit / 이벤트 유형: 양식 제출 시
@@ -130,6 +115,7 @@ function sendFinalNoticeWithQR() {
   const data = sheet.getDataRange().getValues();
   let sentCount = 0;
   let skippedCount = 0;
+  let quotaExceeded = false;
 
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
@@ -139,7 +125,7 @@ function sendFinalNoticeWithQR() {
     const assignedTable = row[COL_ASSIGNED_TABLE]; // N열: 테이블 번호 (주최측 입력)
     const isSent = row[COL_SEND_STATUS];           // R열: 발송 상태
 
-    if (!email || !email.includes('@') || isSent === "발송완료") continue;
+    if (!email || !email.includes('@') || isSent === "발송완료" || isSent === "사후메일발송완료") continue;
 
     // M 또는 N이 비어있으면 아직 배정이 안 된 것 → 건너뜀
     if (!assignedTopic || !assignedTable) {
@@ -147,8 +133,16 @@ function sendFinalNoticeWithQR() {
       continue;
     }
 
-    // QR URL은 응답 제출 시 이미 생성되어 O열에 저장됨
-    const qrUrl = row[COL_QR_URL]; // O열: 응답 제출 시 생성된 QR 이미지 URL
+    // O열에 QR URL이 없으면 (구 데이터 대응) 즉시 재생성 후 시트에 저장
+    let qrUrl = row[COL_QR_URL];
+    if (!qrUrl) {
+      const checkinCode = `${name}|${email}`;
+      qrUrl = `https://quickchart.io/qr?text=${encodeURIComponent(checkinCode)}&size=250`;
+      sheet.getRange(i + 1, COL_QR_URL + 1, 1, 2).setValues([[qrUrl, checkinCode]]);
+      console.log(`[QR 재생성] 행 ${i + 1}: ${name} (${email})`);
+    }
+
+    console.log(`[발송 준비] 행 ${i + 1}: ${name} | ${email} | 주제: ${assignedTopic} | 테이블: ${assignedTable} | QR: ${qrUrl}`);
 
     // --- 최종 안내 이메일 발송 ---
     const subject = `[최종안내] 6월9일 마주 워크숍 테이블 배정 및 입장 QR코드 안내`;
@@ -176,19 +170,24 @@ function sendFinalNoticeWithQR() {
       </div>
     `;
 
+    if (MailApp.getRemainingDailyQuota() < 1) {
+      quotaExceeded = true;
+      break;
+    }
+
     try {
       MailApp.sendEmail({ to: email, subject: subject, htmlBody: body });
-      sheet.getRange(i + 1, COL_CHECKIN_STATUS + 1).setValue("N");
-      sheet.getRange(i + 1, COL_SEND_STATUS + 1).setValue("발송완료");
+      sheet.getRange(i + 1, COL_CHECKIN_STATUS + 1, 1, 2).setValues([["N", "발송완료"]]);
       sentCount++;
     } catch (err) {
       console.error(`이메일 발송 에러 (${email}): ` + err.toString());
     }
   }
 
+  const quotaMsg = quotaExceeded ? "\n\n⚠️ Gmail 일일 발송 한도 초과로 일부 미발송. 내일 다시 실행하세요." : "";
   const msg = skippedCount > 0
-    ? `총 ${sentCount}명에게 최종 QR 메일을 발송했습니다.\n\n⚠️ ${skippedCount}명은 토의주제 또는 테이블 번호(M/N열)가 비어있어 건너뛰었습니다.\n시트에서 배정 후 다시 실행해 주세요.`
-    : `총 ${sentCount}명의 참가자에게 최종 QR 메일 발송을 완료했습니다.`;
+    ? `총 ${sentCount}명에게 최종 QR 메일을 발송했습니다.\n\n⚠️ ${skippedCount}명은 토의주제 또는 테이블 번호(M/N열)가 비어있어 건너뛰었습니다.\n시트에서 배정 후 다시 실행해 주세요.${quotaMsg}`
+    : `총 ${sentCount}명의 참가자에게 최종 QR 메일 발송을 완료했습니다.${quotaMsg}`;
   SpreadsheetApp.getUi().alert(msg);
 }
 
@@ -207,6 +206,7 @@ function sendPostEventEmails() {
   const data = sheet.getDataRange().getValues();
   let attendedCount = 0;
   let absentCount = 0;
+  let quotaExceeded = false;
 
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
@@ -219,6 +219,11 @@ function sendPostEventEmails() {
     if (sendStatus === "사후메일발송완료") continue; // 중복 방지
     // 최종 QR 메일이 발송된(출석 상태가 초기화된) 행만 처리
     if (checkinStatus !== "Y" && checkinStatus !== "N") continue;
+
+    if (MailApp.getRemainingDailyQuota() < 1) {
+      quotaExceeded = true;
+      break;
+    }
 
     try {
       if (checkinStatus === "Y") {
@@ -264,7 +269,8 @@ function sendPostEventEmails() {
     }
   }
 
-  SpreadsheetApp.getUi().alert(`사후 메일 발송 완료: 참석자 ${attendedCount}명, 불참자 ${absentCount}명`);
+  const quotaMsg = quotaExceeded ? "\n\n⚠️ Gmail 일일 발송 한도 초과로 일부 미발송. 내일 다시 실행하세요." : "";
+  SpreadsheetApp.getUi().alert(`사후 메일 발송 완료: 참석자 ${attendedCount}명, 불참자 ${absentCount}명${quotaMsg}`);
 }
 
 /**
@@ -277,6 +283,13 @@ function createPart2FeedbackForms() {
 
   let statusSheet = ss.getSheetByName("폼 생성 결과");
   if (statusSheet) {
+    const ui = SpreadsheetApp.getUi();
+    const confirm = ui.alert(
+      "경고",
+      "'폼 생성 결과' 시트를 초기화하고 폼을 새로 만들까요?\n기존 폼 링크는 삭제됩니다.",
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (confirm !== ui.Button.OK) return;
     ss.deleteSheet(statusSheet);
   }
   statusSheet = ss.insertSheet("폼 생성 결과");
@@ -293,7 +306,11 @@ function createPart2FeedbackForms() {
 
     const file = DriveApp.getFileById(form.getId());
     folder.addFile(file);
-    DriveApp.getRootFolder().removeFile(file);
+    try {
+      DriveApp.getRootFolder().removeFile(file);
+    } catch (e) {
+      console.warn(`[Drive 정리 실패] 폼 파일을 루트에서 제거하지 못했습니다: ${e}`);
+    }
 
     statusSheet.appendRow([topic, form.getPublishedUrl(), "(확인 필요)"]);
   });
