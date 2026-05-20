@@ -431,6 +431,24 @@ AppSheet는 데이터 입력용 화면(뷰)을 자동으로 만들어 줍니다.
 
 > ✅ **확인**: 화면 오른쪽 미리보기(Preview) 패널에서 스마트폰 화면이 보이면 앱 생성 성공입니다.
 
+#### Free 요금제에서 퍼실리테이터 접근 허용 방법
+
+AppSheet Free 요금제는 **프로토타입 모드에서 앱 제작자 포함 최대 10명**까지 무료로 사용할 수 있습니다. 퍼실리테이터가 "User signin not allowed" 오류를 만나면 아래 중 하나를 선택하세요.
+
+##### 방법 A — 앱 오너 계정 공유 (가장 간단)
+
+현장 당일, 퍼실리테이터 스마트폰에 앱 오너 계정(`gm.sse.maju@gmail.com`)으로 AppSheet에 로그인합니다. 행사 후 로그아웃하면 됩니다. 별도 설정 없이 즉시 사용 가능합니다.
+
+##### 방법 B — Manage > Collaborate & Publish (현재 UI 기준)
+
+현재 AppSheet Free 요금제의 `Manage > Collaborate & Publish` 화면은 아래와 같습니다.
+
+![AppSheet Collaborate & Publish 화면](publish01-TeamWork.png)
+
+이 화면에서는 앱 복사/샘플 공유만 가능하며, 별도 사용자 초대 기능은 보이지 않습니다. 퍼실리테이터를 추가하려면 좌측 사이드바의 **[Security(방패 아이콘)]** 탭에서 사용자 접근 설정을 확인하세요.
+
+> ℹ️ AppSheet UI는 지속적으로 변경됩니다. 최신 정책은 [AppSheet 공식 문서](https://support.google.com/appsheet/answer/10104499)를 참고하세요.
+
 ---
 
 ### 7단계: 퍼실리테이터 스마트폰 설치 및 테스트
@@ -440,7 +458,7 @@ AppSheet는 데이터 입력용 화면(뷰)을 자동으로 만들어 줍니다.
 1. 행사 당일 출석 체크를 담당할 퍼실리테이터의 스마트폰에서 **AppSheet** 앱을 설치합니다.
    * iOS: App Store에서 "AppSheet" 검색
    * Android: Play Store에서 "AppSheet" 검색
-2. 방금 만든 앱에 접근할 구글 계정으로 AppSheet에 로그인합니다.
+2. 앱 오너 계정 또는 퍼실리테이터 본인 계정(접근 허용된 경우)으로 AppSheet에 로그인합니다.
 3. 앱 목록에서 **`마주센터 출석체크`** 앱을 탭합니다.
 
 #### 테스트 스캔
