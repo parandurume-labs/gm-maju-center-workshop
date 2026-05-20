@@ -9,7 +9,7 @@ const COL_ASSIGNED_TOPIC = 12; // M열: 배정된 주제
 const COL_ASSIGNED_TABLE = 13; // N열: 테이블 번호
 const COL_QR_URL = 14;         // O열: QR 코드 이미지 URL (메일 첨부용)
 const COL_CHECKIN_CODE = 15;   // P열: 체크인 코드 (AppSheet QR 스캔 대조용)
-const COL_CHECKIN_STATUS = 16; // Q열: 출석 상태 (AppSheet가 QR 스캔 시 Y로 업데이트)
+const COL_CHECKIN_STATUS = 16; // Q열: 출석 상태 (AppSheet가 QR 스캔 시 '출석'으로 업데이트)
 const COL_SEND_STATUS = 17;    // R열: 최종메일발송상태
 
 // 2부 토의 주제 목록
@@ -64,7 +64,7 @@ function onFormSubmit(e) {
       "",           // N: 테이블 번호 (주최측 직접 입력)
       qrUrl,        // O: QR 코드 URL (즉시 생성)
       checkinCode,  // P: 체크인 코드 (즉시 생성, AppSheet 조회 기준)
-      "",           // Q: 출석 상태 (최종메일 발송 시 N으로 초기화)
+      "미출석",      // Q: 출석 상태 (폼 제출 즉시 미출석으로 초기화)
       ""            // R: 최종메일발송상태
     ]]);
 
@@ -177,7 +177,7 @@ function sendFinalNoticeWithQR() {
 
     try {
       MailApp.sendEmail({ to: email, subject: subject, htmlBody: body });
-      sheet.getRange(i + 1, COL_CHECKIN_STATUS + 1, 1, 2).setValues([["N", "발송완료"]]);
+      sheet.getRange(i + 1, COL_CHECKIN_STATUS + 1, 1, 2).setValues([["미출석", "발송완료"]]);
       sentCount++;
     } catch (err) {
       console.error(`이메일 발송 에러 (${email}): ` + err.toString());
@@ -194,7 +194,7 @@ function sendFinalNoticeWithQR() {
 /**
  * 3. 행사 후 사후 메일 일괄 발송 (참석자/불참자 구분)
  * 실행 방법: '🛠️ 워크숍 관리' 메뉴 -> '사후 감사/안내 메일 발송' 클릭
- * 전제 조건: AppSheet에서 출석 상태(Q열)가 Y 또는 N으로 업데이트된 이후 실행
+ * 전제 조건: AppSheet에서 출석 상태(Q열)가 출석 또는 미출석으로 업데이트된 이후 실행
  */
 function sendPostEventEmails() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("설문지 응답 시트1");
@@ -212,13 +212,13 @@ function sendPostEventEmails() {
     const row = data[i];
     const name = row[COL_NAME];
     const email = row[COL_EMAIL];
-    const checkinStatus = row[COL_CHECKIN_STATUS]; // Q열: Y(참석) / N(불참)
+    const checkinStatus = row[COL_CHECKIN_STATUS]; // Q열: 출석 / 미출석
     const sendStatus = row[COL_SEND_STATUS];       // R열
 
     if (!email || !email.includes('@')) continue;
     if (sendStatus === "사후메일발송완료") continue; // 중복 방지
     // 최종 QR 메일이 발송된(출석 상태가 초기화된) 행만 처리
-    if (checkinStatus !== "Y" && checkinStatus !== "N") continue;
+    if (checkinStatus !== "출석" && checkinStatus !== "미출석") continue;
 
     if (MailApp.getRemainingDailyQuota() < 1) {
       quotaExceeded = true;
@@ -226,7 +226,7 @@ function sendPostEventEmails() {
     }
 
     try {
-      if (checkinStatus === "Y") {
+      if (checkinStatus === "출석") {
         const subject = `[마주 워크숍] 함께해 주셔서 감사합니다! 결과 요약 안내`;
         const body = `
           <div style="font-family: 'Malgun Gothic', sans-serif; max-width: 600px; margin: 0 auto; color: #333; border: 1px solid #ddd; border-radius: 10px; padding: 30px;">
