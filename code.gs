@@ -156,7 +156,7 @@ function sendFinalNoticeWithQR() {
         <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 20px; border-radius: 8px; margin: 25px 0;">
           <h3 style="margin-top: 0; color: #166534; font-size: 18px;">[2부 토의 배정 결과]</h3>
           <p style="font-size: 16px; margin-bottom: 5px;"><strong>📌 주제:</strong> ${assignedTopic}</p>
-          <p style="font-size: 16px; margin: 0;"><strong>🪑 좌석:</strong> ${assignedTable}</p>
+          <p style="font-size: 16px; margin: 0;"><strong>🪑 참가 테이블:</strong> ${assignedTable}</p>
           <p style="font-size: 13px; color: #15803d; margin-top: 10px;">* 1부 행사 종료 후, 휴식 시간에 위 안내된 테이블로 이동해 주시기 바랍니다.</p>
         </div>
 
