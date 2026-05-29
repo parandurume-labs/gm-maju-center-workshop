@@ -151,472 +151,541 @@
 
 ---
 
-## 📱 AppSheet QR 출석 체크 앱 설정 가이드
+## 📱 AppSheet 출석 체크 앱 설정 가이드
 
-> AppSheet를 처음 사용하는 분도 따라할 수 있도록 화면 단위로 상세히 작성한 가이드입니다.
->
-> 📖 **참고 자료**: 이 가이드는 [행사 자동화 관리 시스템 — 이메일 확인 및 QR 스캔 가이드](https://github.com/durume/GM/blob/main/gm-social-economy-center/EventAutomation/email-confirmation-and-QR-scan.md)의 아키텍처를 기반으로, 이 프로젝트의 데이터 형식(`이름|이메일`)과 시트 구조(`설문지 응답 시트1`)에 맞게 작성되었습니다.
+> AppSheet를 처음 사용하는 분도 따라할 수 있도록 화면 단위로 상세히 작성한 가이드입니다. QR 자동 출석과 직접(수동) 출석 기능을 하나의 앱으로 구성합니다.
 
-**QR 흐름 요약**: 참가자 QR 스캔 → `ScanLogs` 시트에 기록 → `자동출석트리거` Action 실행 → `설문지 응답 시트1`의 `출석 상태`(Q열)를 `"출석"`으로 업데이트 → `code.gs`가 참석자 구분
+**데이터 흐름:**
 
-### 🔍 AppSheet란?
+* QR 스캔 → ScanLogs 기록 → `자동출석트리거` → 출석 상태 자동 업데이트
+* 직접 검색 → `직접출석처리` → 출석 상태 업데이트
 
-AppSheet는 코딩 없이 Google Sheets를 기반으로 스마트폰 앱을 만드는 Google의 무료(기본 요금제) 서비스입니다. 이 가이드에서는 AppSheet로 **QR 스캐너 앱**을 만들어 현장 출석 체크에 활용합니다.
+### 완성 후 앱 화면 구조
+
+```text
+앱 (3탭)
+├── 🏠 홈          ← 실시간 출석 현황 파이 차트
+├── 📷 스캐너      ← QR 코드 스캔 → 자동 출석 처리
+└── 👤 직접출석   ← 이름/소속 검색 → 수동 출석 처리
+      └── 참가자 상세  ← 출석 확인 + 출석 취소
+```
+
+> ℹ️ **AppSheet**: 코딩 없이 Google Sheets를 기반으로 스마트폰 앱을 만드는 Google 서비스입니다.
 
 ### 📋 시작 전 준비물 확인
 
-설정을 시작하기 전에 아래 항목이 모두 준비되어 있는지 확인하세요.
+* ☐ 워크숍 응답 스프레드시트에 참가자 데이터 입력됨
+* ☐ `sendFinalNoticeWithQR` 실행 완료 — `체크인 코드`(P열)에 `이름|이메일주소` 형식 저장됨
+* ☐ appsheet.com에 구글 계정으로 로그인 가능
 
-* ☐ 워크숍 응답 스프레드시트가 열려 있고 참가자 데이터가 입력되어 있음
-* ☐ `code.gs`의 `sendFinalNoticeWithQR`을 실행하여 P열(체크인 코드)에 `이름|이메일` 형식 데이터가 채워져 있음
-* ☐ 구글 계정으로 [appsheet.com](https://www.appsheet.com) 로그인 가능
-
----
-
-### 이 프로젝트의 QR 코드 데이터 형식
-
-`code.gs`의 `onFormSubmit`이 폼 제출 시 P열(체크인 코드)에 아래 형식으로 자동 저장합니다.
-
-```text
-이름|이메일
-예: 홍길동|hong@example.com
-```
-
-AppSheet가 QR을 스캔하면 이 문자열을 읽어 `|`로 분리하여 이름과 이메일을 각각 추출합니다.
+> ℹ️ 체크인 코드 형식: `홍길동|hong@example.com` (이름 | 이메일주소, 파이프 구분)
 
 ---
 
-### 0단계: ScanLogs 시트 만들기 (Google Sheets에서)
+### 1단계: ScanLogs 시트 생성 (Google Sheets에서)
 
-AppSheet 설정 전에, 스캔 기록을 저장할 시트를 먼저 만들어야 합니다.
+AppSheet 설정 전에 스캔 기록을 저장할 시트를 먼저 만듭니다.
 
-1. 워크숍 응답 스프레드시트를 엽니다.
-2. 하단 탭 옆의 **`+`** 버튼을 눌러 새 시트를 추가합니다.
-3. 시트 이름을 **`ScanLogs`**로 정확히 입력합니다. (대소문자, 띄어쓰기 주의)
-4. `ScanLogs` 시트의 첫 번째 행(1행)에 아래 헤더를 입력합니다.
+1. 워크숍 응답 스프레드시트 하단 탭 **[+]** → 시트 이름: **`ScanLogs`** (대소문자·띄어쓰기 정확히)
+2. 1행에 아래 헤더를 입력합니다.
 
    | A1 | B1 | C1 | D1 |
    | --- | --- | --- | --- |
    | ID | 체크인코드 | 스캔된이메일 | 스캔시간 |
 
-   > ℹ️ B1을 `체크인코드`로 지정하는 이유: AppSheet에서 이 열에 QR 원시값(`이름|이메일` 전체)이 저장됩니다. 퍼실리테이터 화면에는 이름만 보이는 별도 가상 컬럼을 추가할 것이므로 헤더 이름을 명확히 구분합니다.
+3. 데이터는 입력하지 않습니다 — AppSheet가 스캔 시 자동으로 채웁니다.
 
-5. 헤더만 입력하고 데이터는 비워둡니다. AppSheet가 스캔할 때마다 자동으로 채웁니다.
-
-> ✅ **확인**: 시트 탭에 `설문지 응답 시트1`과 `ScanLogs` 두 개의 탭이 보이면 준비 완료입니다.
+> ✅ 확인: 스프레드시트 탭에 응답 시트와 `ScanLogs` 두 탭이 보이면 완료
 
 ---
 
-### 1단계: AppSheet 앱 생성
+### 2단계: AppSheet 앱 생성
 
-#### 1-1. appsheet.com 접속 및 로그인
+구글 스프레드시트에서 직접 생성하는 방법이 가장 빠릅니다.
 
-1. 웹 브라우저에서 [appsheet.com](https://www.appsheet.com)을 엽니다.
-2. 우측 상단 **[Sign in]** 버튼 → **[Sign in with Google]** → 워크숍 스프레드시트를 소유한 구글 계정으로 로그인합니다.
+**방법 A — 스프레드시트에서 직접 생성 (권장):**
 
-#### 1-2. 새 앱 만들기
+1. 워크숍 스프레드시트 상단 **[확장 프로그램] → [AppSheet] → [앱 만들기]** 클릭
+2. 새 탭에 AppSheet 편집 화면이 열립니다.
 
-1. 로그인 후 대시보드에서 **[+ Create]** 버튼(또는 **[Make a new app]**)을 클릭합니다.
-2. 팝업에서 **[Start with existing data]**를 선택합니다.
-3. 앱 이름 입력란에 **`마주센터 출석체크`** (또는 원하는 이름)를 입력합니다.
-4. 카테고리는 **[Other]**를 선택합니다.
-5. **[Choose your data]** 화면에서 **[Google Sheets]** 아이콘을 클릭합니다.
-6. 구글 드라이브 선택창이 열립니다. 워크숍 응답 스프레드시트를 찾아 선택합니다.
-   * 검색창에 스프레드시트 이름의 일부를 입력하면 빠르게 찾을 수 있습니다.
-7. 시트 목록이 표시되면 **`설문지 응답 시트1`**을 선택합니다.
-8. **[Next]** 버튼을 눌러 앱 편집 화면으로 진입합니다.
+![구글 스프레드시트에서 AppSheet 앱 만들기](extension.png)
 
-> ℹ️ 앱 편집 화면에는 좌측에 **Data**, **UX**, **Actions**, **Security**, **Manage** 탭이 있습니다. 이 가이드는 Data, Actions, UX 탭을 순서대로 사용합니다.
+**방법 B — appsheet.com에서 직접:**
+
+1. [appsheet.com](https://www.appsheet.com) 로그인
+2. **[+ Create] → [Start with existing data] → [Google Sheets]** 선택
+3. 워크숍 스프레드시트 → `설문지 응답 시트1` 선택 → **[Next]**
+
+> ℹ️ 앱 편집 화면 좌측에 **Data**, **UX**, **Actions**, **Security**, **Manage** 탭이 있습니다. 이 가이드는 **Data → Actions → UX** 순서로 진행합니다.
 
 ---
 
-### 2단계: ScanLogs 데이터 소스 추가
+### 3단계: ScanLogs 테이블 추가
 
-앱 편집 화면에서 `ScanLogs` 시트를 추가합니다.
+1. 좌측 **[Data]** 탭 → 상단 **[+]** (Add Table) 클릭
+2. **[Google Sheets]** 선택 → 동일한 워크숍 스프레드시트 선택
+3. `ScanLogs` 시트 선택 → **[Add Sheet]**
 
-1. 좌측 메뉴에서 **[Data]** 탭을 클릭합니다.
-2. 화면 상단에 `설문지 응답 시트1` 테이블이 보입니다. 그 옆의 **[+]** 버튼(Add Table)을 클릭합니다.
-3. **[Google Sheets]**를 선택합니다.
-4. 다시 동일한 워크숍 스프레드시트를 선택합니다.
-5. 시트 목록에서 **`ScanLogs`**를 선택합니다.
-6. **[Add Sheet]**를 클릭합니다.
-
-> ✅ **확인**: Data 탭에 `설문지 응답 시트1`과 `ScanLogs` 두 개의 테이블이 보이면 성공입니다.
+> ✅ 확인: Data 탭에 `설문지 응답 시트1`과 `ScanLogs` 두 테이블이 보이면 완료
 
 ---
 
-### 3단계: 컬럼 설정 (Data > Columns)
+### 4단계: Slice 생성 (직접출석 검색용)
 
-이 단계가 가장 중요합니다. 각 컬럼의 **타입(Type)**과 **속성(Properties)**을 정확히 설정해야 QR 스캔이 올바르게 작동합니다.
+이름·소속·이메일주소로 검색 가능한 Slice를 만듭니다. `직접출석` 뷰의 데이터 소스로 사용합니다.
 
-#### 3-A. `설문지 응답 시트1` 컬럼 설정
+1. **[Data]** 탭 → 좌측 `설문지 응답 시트1` 아래 **[+]** 또는 상단 **[Slices]** → **[+ New Slice]**
+2. 아래와 같이 설정합니다.
 
-1. **[Data]** 탭에서 **`설문지 응답 시트1`** 테이블을 클릭합니다.
-2. 우측에 컬럼 목록이 표시됩니다. 아래 컬럼들을 찾아 설정합니다. 나머지 컬럼은 기본값으로 두어도 됩니다.
+   | 항목 | 설정값 |
+   | --- | --- |
+   | Slice name | `참가자검색` |
+   | Source table | `설문지 응답 시트1` |
+   | Row filter condition | **비워둠** (조건 없음 = 모든 행 포함) |
+   | Slice columns | **[Add] 클릭하지 않음** (기본값 = 모든 컬럼 포함) |
 
-##### 이메일 컬럼 설정 (Key 지정)
+3. **Slice Actions**: `Auto assign` 유지
+4. **[Done]** → **[Save]**
 
-1. `이메일` 컬럼의 연필 아이콘(✏️)을 클릭합니다.
-2. **Type**: `Email`로 변경합니다.
-3. **Key**: 체크박스를 **켭니다(ON)**. 이 열이 각 참가자를 고유하게 구분하는 기준이 됩니다.
-4. **[Done]**을 클릭합니다.
+> ⚠️ **Slice columns에서 특정 컬럼을 선택하면** `Table slice does not contain column '_RowNumber'` 오류가 발생합니다. 기본값(모든 컬럼)을 유지하세요. 화면 표시 컬럼은 View 설정에서 제어합니다.
 
-> ⚠️ Key는 반드시 하나의 컬럼에만 설정해야 합니다. 다른 컬럼에 Key가 이미 설정되어 있다면 해제해 주세요.
+---
 
-##### 이름 컬럼 설정
+### 5단계: 컬럼 설정
 
-1. `이름` 컬럼의 연필 아이콘을 클릭합니다.
-2. **Type**: `Text` 확인 (기본값)
-3. **Label**: 체크박스를 **켭니다(ON)**. 앱 화면에서 참가자 이름이 대표 표시 값이 됩니다.
-4. **[Done]**을 클릭합니다.
+#### 5-A. `설문지 응답 시트1` — Key 및 핵심 컬럼
 
-##### 출석 상태 컬럼 설정
+> ⚠️ **`이메일주소` Key 설정을 가장 먼저** 완료하세요. ScanLogs의 `참가자찾기` Ref 컬럼이 이 Key를 참조합니다.
 
-1. `출석 상태` 컬럼의 연필 아이콘을 클릭합니다.
-2. **Type**: **`Text`**를 선택합니다.
-3. **Editable**: 체크박스를 **켭니다(ON)**.
-4. **[Done]**을 클릭합니다.
+**`이메일주소` — Key 지정:**
 
-> ℹ️ 이 컬럼은 Action이 자동으로 `"출석"`을 기록하므로 별도 제약은 필요하지 않습니다. 수동 편집도 허용하고 싶다면 **Valid if**에 `LIST("출석", "미출석")`을 입력하면 드롭다운 선택창이 생기고 다른 값 입력이 차단됩니다.
+1. **[Data]** → `설문지 응답 시트1` → `이메일주소` 컬럼 연필(✏️)
+2. **Type**: `Email` / **Key**: **ON** / **[Done]**
 
-#### 3-B. `ScanLogs` 컬럼 설정
+> ⚠️ AppSheet가 `타임스탬프`(DateTime)를 Key로 자동 지정할 수 있습니다. `타임스탬프` Key를 **OFF**로 먼저 끄고 `이메일주소`를 **ON**으로 설정하세요. Key는 하나의 컬럼에만 설정합니다.
+>
+> ⚠️ Key 설정 없이 ScanLogs `참가자찾기` Ref 컬럼을 저장하면 `"app formula 'Email' does not match column type 'Ref ... of DateTime'"` 오류가 발생합니다.
 
-1. **[Data]** 탭에서 **`ScanLogs`** 테이블을 클릭합니다.
+**`이름` — Label 지정:**
 
-##### ID 컬럼 설정
+1. `이름` 컬럼 ✏️ → **Label**: **ON** → **[Done]**
 
-1. `ID` 컬럼의 연필 아이콘을 클릭합니다.
+**`출석 상태` — 편집 허용:**
+
+1. `출석 상태` 컬럼 ✏️ → **Type**: `Text` → **Editable**: **ON** → **[Done]**
+
+> ℹ️ 드롭다운 선택 원하면: **Valid if** = `LIST("출석", "미출석")`
+
+---
+
+#### 5-B. `ScanLogs` — 컬럼 설정
+
+**[Data]** → `ScanLogs` 테이블 클릭
+
+**`ID` 컬럼:**
+
+| 항목 | 값 |
+| --- | --- |
+| Type | `Text` |
+| Key | **ON** |
+| Initial value | `=UNIQUEID()` |
+| Show | **OFF** |
+
+**`체크인코드` 컬럼 — QR 스캔 입력창:**
+
+| 항목 | 값 |
+| --- | --- |
+| Type | `Text` |
+| Scannable (Other Properties) | **ON** |
+| Show | **ON** |
+
+> ⚠️ **Show를 OFF로 설정하면** `Column '체크인코드' cannot be scanned because it is marked 'Hidden'` 오류 발생. Scannable 컬럼은 반드시 Show ON.
+
+**`스캔된 이름` — 가상 컬럼 추가 (이름만 표시):**
+
+1. **[+ Add virtual column]** → 이름: `스캔된 이름`
 2. **Type**: `Text`
-3. **Key**: **켭니다(ON)**
-4. **Initial value**: `=UNIQUEID()` 입력 (매 스캔마다 고유 ID 자동 생성)
-5. **Show**: **끕니다(OFF)** — 사용자 화면에 ID 칸이 보이지 않게 합니다.
-6. **[Done]**을 클릭합니다.
+3. **App formula**: `INDEX(SPLIT([체크인코드], "|"), 1)`
+4. **[Done]**
 
-##### 체크인코드 컬럼 설정 (QR 원시 입력 — 숨김)
+**`스캔된이메일` 컬럼:**
 
-이 컬럼이 실제로 QR을 스캔하는 입력창입니다. QR 원시값(`이름|이메일` 전체)이 저장되며, 퍼실리테이터 화면에서는 숨깁니다.
+| 항목 | 값 |
+| --- | --- |
+| Type | `Text` |
+| Initial value | `INDEX(SPLIT([체크인코드], "\|"), 2)` |
+| Editable | **OFF** |
 
-1. `체크인코드` 컬럼의 연필 아이콘을 클릭합니다.
-2. **Type**: `Text`
-3. 페이지 하단의 **[Other Properties]**를 펼칩니다.
-4. **Scannable** 체크박스를 **켭니다(ON)**.
-   * Scannable을 켜면 스마트폰 앱에서 이 입력창 옆에 카메라 QR 아이콘이 나타납니다.
-5. **Show**: **끕니다(OFF)** — 퍼실리테이터 화면에 원시값이 노출되지 않도록 숨깁니다.
-6. **[Done]**을 클릭합니다.
+**`참가자찾기` — 가상 Ref 컬럼 (핵심):**
 
-> ⚠️ QR 카메라 아이콘은 **스마트폰의 AppSheet 앱에서만** 보입니다. PC 웹 브라우저에서는 보이지 않는 것이 정상입니다.
+> ⚠️ **전제**: 5-A의 `이메일주소` Key 설정 완료 후 진행하세요.
 
-##### 스캔된 이름 컬럼 추가 (이름만 표시하는 가상 컬럼)
-
-퍼실리테이터가 스캔 후 확인하는 화면에 이름만 깔끔하게 보이도록, `체크인코드`에서 `|` 앞의 이름 부분만 추출하는 가상 컬럼을 추가합니다.
-
-1. 컬럼 목록 하단의 **[+ Add virtual column]** 버튼을 클릭합니다.
-2. 컬럼 이름에 **`스캔된 이름`**을 입력합니다.
-3. **Type**: `Text`
-4. **App formula**에 아래 수식을 입력합니다.
-
-   ```text
-   INDEX(SPLIT([체크인코드], "|"), 1)
-   ```
-
-5. **[Done]**을 클릭합니다.
-
-> ℹ️ 이렇게 하면 `체크인코드`에 `홍길동|hong@example.com`이 저장돼도 퍼실리테이터 화면에는 `스캔된 이름: 홍길동`만 표시됩니다.
-
-##### 스캔된 이메일 컬럼 설정 (자동 추출)
-
-1. `스캔된 이메일` 컬럼의 연필 아이콘을 클릭합니다.
-2. **Type**: `Text`
-3. **Initial value**에 아래 수식을 입력합니다.
-
-   ```text
-   INDEX(SPLIT([체크인코드], "|"), 2)
-   ```
-
-4. **Editable**: **끕니다(OFF)**
-5. **[Done]**을 클릭합니다.
-
-##### 참가자찾기 컬럼 추가 (Virtual Ref 컬럼 — 핵심)
-
-이 컬럼은 `체크인코드`에서 이름·이메일을 추출하여 `설문지 응답 시트1`에서 해당 참가자를 찾아주는 "링크" 역할을 합니다.
-
-1. 컬럼 목록 하단의 **[+ Add virtual column]** 버튼을 클릭합니다.
-2. 컬럼 이름에 **`참가자찾기`**를 입력합니다.
-3. **Type**: **`Ref`**를 선택합니다.
-4. **Source table**: **`설문지 응답 시트1`**을 선택합니다.
-5. **App formula**에 아래 수식을 입력합니다.
+1. **[+ Add virtual column]** → 이름: `참가자찾기`
+2. **Type**: `Ref` → **Source table**: `설문지 응답 시트1`
+3. **App formula**:
 
    ```text
    ANY(
-     SELECT(설문지 응답 시트1[이메일],
+     SELECT(설문지 응답 시트1[이메일주소],
        AND(
-         [이름] = INDEX(SPLIT([체크인코드], "|"), 1),
-         [이메일] = INDEX(SPLIT([체크인코드], "|"), 2)
+         [이름] = INDEX(SPLIT([_THISROW].[체크인코드], "|"), 1),
+         [이메일주소] = INDEX(SPLIT([_THISROW].[체크인코드], "|"), 2)
        )
      )
    )
    ```
 
-   > ⚠️ **중요**: `SELECT(설문지 응답 시트1[이메일], ...)` 로 반드시 **이메일**을 반환해야 합니다. `설문지 응답 시트1`의 Key가 `이메일`이기 때문에, Ref 컬럼은 이 Key 값을 저장해야 Action이 올바른 행을 찾아 업데이트할 수 있습니다. `이름`을 반환하면 매칭이 실패하여 출석 상태가 바뀌지 않습니다.
+4. **Show**: **OFF**
+5. **[Done]**
 
-6. **Show**: **끕니다(OFF)**
-7. **[Done]**을 클릭합니다.
+> ℹ️ `[_THISROW].[체크인코드]`를 명시하는 이유: `SELECT()` 조건 안에서 `[체크인코드]`만 쓰면 `설문지 응답 시트1`의 `체크인 코드` 컬럼으로 해석됩니다. `[_THISROW]`로 ScanLogs 현재 행을 명시합니다.
 
-##### 스캔시간 컬럼 설정
+**`스캔시간` 컬럼:**
 
-1. `스캔시간` 컬럼의 연필 아이콘을 클릭합니다.
-2. **Type**: `DateTime`
-3. **Initial value**: `NOW()` 입력 (스캔 시점의 시간이 자동 기록됨)
-4. **Editable**: **끕니다(OFF)**
-5. **[Done]**을 클릭합니다.
+| 항목 | 값 |
+| --- | --- |
+| Type | `DateTime` |
+| Initial value | `NOW()` |
+| Editable | **OFF** |
 
-컬럼 설정 완료 요약표:
+**ScanLogs 컬럼 설정 완료 요약:**
 
-| 컬럼명 | 타입 | Initial value | App formula | 특이 설정 |
-| --- | --- | --- | --- | --- |
-| ID | Text | `=UNIQUEID()` | — | Key 🔑, Show OFF |
-| 체크인코드 | Text | — | — | **Scannable ON**, Show OFF (QR 원시값 저장) |
-| 스캔된성명 | Text (Virtual) | — | `INDEX(SPLIT([체크인코드], "\|"), 1)` | 이름만 표시 |
-| 스캔된이메일 | Text | `INDEX(SPLIT([체크인코드], "\|"), 2)` | — | Editable OFF |
-| 참가자찾기 | Ref → `설문지 응답 시트1` | — | *(위 수식)* | Virtual, Show OFF |
-| 스캔시간 | DateTime | `NOW()` | — | Editable OFF |
+| 컬럼 | 타입 | Initial value / App formula | 특이 설정 |
+| --- | --- | --- | --- |
+| ID | Text | `=UNIQUEID()` | Key 🔑, Show OFF |
+| 체크인코드 | Text | — | **Scannable ON, Show ON** ⚠️ |
+| 스캔된 이름 | Text (Virtual) | `INDEX(SPLIT([체크인코드],"\|"),1)` | — |
+| 스캔된이메일 | Text | `INDEX(SPLIT([체크인코드],"\|"),2)` | Editable OFF |
+| 참가자찾기 | Ref → `설문지 응답 시트1` | `ANY(SELECT(...이메일주소...))` | Virtual, Show OFF |
+| 스캔시간 | DateTime | `NOW()` | Editable OFF |
 
 ---
 
-### 4단계: Action 설정 (Actions)
+### 6단계: Action 설정 (총 8개)
 
-Action은 "어떤 일이 생겼을 때 자동으로 무언가를 실행하는 규칙"입니다. QR을 스캔하면 자동으로 출석 상태가 바뀌도록 Action을 두 개 만듭니다.
+**[Actions]** 탭 → **[+ New Action]**으로 각 Action을 생성합니다.
 
-#### Action 1 — `출석상태변경` (참가자 시트의 출석 상태 바꾸기)
+> ⚠️ Column Inputs 값은 반드시 **큰따옴표 포함** (`"출석"`, `"미출석"`)으로 입력하세요. 누락 시 `TRUE`로 저장됩니다.
 
-1. 좌측 메뉴 **[Actions]**를 클릭합니다.
-2. **[+ New Action]** 버튼을 클릭합니다.
-3. 아래와 같이 입력합니다.
+---
 
-   | 항목 | 입력값 | 설명 |
+**Action 1 — `출석상태변경`** (QR 자동 출석 — 숨김)
+
+| 항목 | 값 |
+| --- | --- |
+| For a record of this table | `설문지 응답 시트1` |
+| Do this | `Data: set the values of some columns in this row` |
+| Column Inputs | `출석 상태` = `"출석"` |
+| Position | `Hide` |
+
+---
+
+**Action 2 — `자동출석트리거`** (QR 스캔 저장 시 자동 실행 — 숨김)
+
+| 항목 | 값 |
+| --- | --- |
+| For a record of this table | `ScanLogs` |
+| Do this | `Data: execute an action on a set of rows` |
+| Referenced Table | `설문지 응답 시트1` |
+| Referenced Rows | `LIST([참가자찾기])` |
+| Referenced Action | `출석상태변경` |
+| Position | `Hide` |
+
+> ℹ️ 이 Action은 7단계 `스캐너` 뷰의 **Form Saved** 이벤트에 연결됩니다.
+
+---
+
+**Action 3 — `출석상태변경_직접`** (직접 출석 — 숨김, Grouped 내부용)
+
+| 항목 | 값 |
+| --- | --- |
+| For a record of this table | `설문지 응답 시트1` |
+| Do this | `Data: set the values of some columns in this row` |
+| Column Inputs | `출석 상태` = `"출석"` |
+| Position | `Hide` |
+
+---
+
+**Action 4 — `출석후상세이동`** (출석 처리 후 상세 페이지 이동 — 숨김, Grouped 내부용)
+
+| 항목 | 값 |
+| --- | --- |
+| For a record of this table | `설문지 응답 시트1` |
+| Do this | `App: go to another view within this app` |
+| Target | `LINKTOROW([이메일주소], "참가자 상세")` |
+| Position | `Hide` |
+
+> ℹ️ `LINKTOROW(key, view)` — Key 값 첫 번째, 뷰 이름 두 번째. `참가자 상세` 뷰(7단계 View D)를 먼저 만든 후 이 수식을 입력해도 됩니다. ([AppSheet Docs](https://support.google.com/appsheet/answer/10106539))
+
+---
+
+**Action 5 — `직접출석처리`** ([출석] 버튼 — 미출석 참가자용 Grouped Action)
+
+| 항목 | 값 |
+| --- | --- |
+| For a record of this table | `설문지 응답 시트1` |
+| Do this | `Grouped: execute a sequence of actions` |
+| Action list | 1: `출석상태변경_직접` → 2: `출석후상세이동` |
+| Confirmation message | `"출석 처리합니다. 계속할까요?"` |
+| Only if | `[출석 상태] <> "출석"` |
+| Position | `Prominent` |
+| Display name | `출석` |
+
+> ℹ️ Confirmation message는 정적 텍스트만 지원합니다 (컬럼 참조 불가).
+>
+> ⚠️ `Grouped` 타입이 없는 경우: `출석상태변경_직접` Position을 `Prominent`로 변경해 단독 사용합니다 (상세 페이지 자동 이동 생략).
+
+---
+
+**Action 6 — `이미출석알림`** ([✓ 출석] 버튼 — 이미 출석한 참가자 알림용)
+
+| 항목 | 값 |
+| --- | --- |
+| For a record of this table | `설문지 응답 시트1` |
+| Do this | `Data: set the values of some columns in this row` |
+| Column Inputs | `출석 상태` = `"출석"` (동일 값 재기록) |
+| Only if | `[출석 상태] = "출석"` |
+| Confirmation message | `"이미 출석 처리된 참가자입니다."` |
+| Position | `Prominent` |
+| Display name | `✓ 출석` |
+
+> ℹ️ 확인 대화상자가 알림 역할을 합니다. 동일 값 재기록이므로 실제 데이터 변경 없음.
+
+---
+
+**Action 7 — `출석취소`** (출석 → 미출석 되돌리기 — 참가자 상세 페이지용)
+
+| 항목 | 값 |
+| --- | --- |
+| For a record of this table | `설문지 응답 시트1` |
+| Do this | `Data: set the values of some columns in this row` |
+| Column Inputs | `출석 상태` = `"미출석"` |
+| Only if | `[출석 상태] = "출석"` |
+| Confirmation message | `"출석을 취소합니다. 계속할까요?"` |
+| Position | `Prominent` |
+| Display name | `출석 취소` |
+
+---
+
+**Action 8 — `직접출석화면으로`** (스캐너 → 직접출석 화면 이동)
+
+| 항목 | 값 |
+| --- | --- |
+| For a record of this table | `ScanLogs` |
+| Do this | `App: go to another view within this app` |
+| Target | `LINKTOVIEW("직접출석")` |
+| Position | `Prominent` |
+| Display name | `직접 출석 체크` |
+
+> ℹ️ `LINKTOVIEW("view-name")` — 지정된 뷰로 이동하는 딥 링크. ([AppSheet Docs](https://support.google.com/appsheet/answer/10108105))
+
+---
+
+### 7단계: 뷰(화면) 설정 (총 5개)
+
+**[UX] → [Views]** 탭에서 뷰를 만듭니다.
+
+> ℹ️ **뷰 순서 변경 방법**: 드래그는 작동하지 않습니다. 뷰 오른쪽 **⋯ → [Move to] → [Primary Navigation]**을 선택합니다.
+
+---
+
+#### View A — `출석현황` (실시간 파이 차트)
+
+**[+ New View]**
+
+| 항목 | 설정값 |
+| --- | --- |
+| View name | `출석현황` |
+| For this data | `설문지 응답 시트1` |
+| View type | `Chart` |
+
+**View Options:**
+
+* Chart type: `aggregate piechart`
+* Group aggregate: `COUNT`
+* Chart columns: `출석 상태`
+* Label type: `Value` (기본값 변경 필수 — 인원 수 표시)
+* Show legend: **ON**
+
+**[Done]**
+
+---
+
+#### View B — `스캐너` (QR 스캔 폼)
+
+> ⚠️ `ScanLogs_Form`은 시스템 자동 생성 뷰라 수정 불가. 반드시 **새 뷰를 생성**합니다.
+
+**[+ New View]**
+
+| 항목 | 설정값 |
+| --- | --- |
+| View name | `스캐너` |
+| For this data | `ScanLogs` |
+| View type | `Form` |
+
+**Behavior 섹션 → Event Actions → Form Saved**: `자동출석트리거` 선택
+
+**Finish view**: `Auto assign (Go Back)` (저장 후 이전 화면으로 복귀)
+
+**Actions 섹션**: `직접출석화면으로` 체크 **ON**
+
+**[Done]**
+
+---
+
+#### View C — `홈` (출석 현황 대시보드)
+
+**[+ New View]**
+
+| 항목 | 설정값 |
+| --- | --- |
+| View name | `홈` |
+| View type | `Dashboard` |
+| Position | `first` |
+
+**View Options → View entries → [Add]:**
+
+| 뷰 선택 | 크기 |
+| --- | --- |
+| `출석현황` | `Large` |
+
+> ⚠️ Dashboard View entries에 **Form 뷰(`스캐너`)는 추가할 수 없습니다** — AppSheet 제한 사항. 스캐너는 하단 내비게이션 탭으로 접근합니다.
+>
+> ℹ️ Size 옵션: `Large` / `Wide` / `Tall` / `Small`
+
+**[Done]** → **⋯ → [Move to] → [Primary Navigation]**
+
+---
+
+#### View D — `참가자 상세` (출석 확인 및 취소)
+
+**[+ New View]**
+
+| 항목 | 설정값 |
+| --- | --- |
+| View name | `참가자 상세` |
+| For this data | `설문지 응답 시트1` |
+| View type | `Detail` |
+| Position | `ref` |
+
+**Column order** (아래 컬럼만 체크 ON):
+
+* 이름, 소속, 배정된 주제, 테이블 번호, 출석 상태
+
+**Actions 섹션**: `출석취소`만 체크 **ON**, 나머지 **OFF**
+
+**[Done]**
+
+> ℹ️ `Position: ref` — 내비게이션 탭에 표시되지 않고, `LINKTOROW()`로 이동할 때만 열립니다.
+
+---
+
+#### View E — `직접출석` (검색 및 수동 출석 처리)
+
+**[+ New View]**
+
+| 항목 | 설정값 |
+| --- | --- |
+| View name | `직접출석` |
+| For this data | `참가자검색` (4단계 Slice) |
+| View type | `Deck` |
+
+> ℹ️ **Deck 뷰 사용 이유**: Table 뷰에서 Prominent 버튼은 행 탭 후 상세 진입 시에만 보입니다. Deck 뷰는 각 카드에 [출석]/[✓ 출석] 버튼을 바로 노출합니다. ([AppSheet Docs](https://support.google.com/appsheet/answer/10106514))
+
+**View Options:**
+
+* Sort: `이름` (오름차순)
+* Group by: `출석 상태`
+* Group order: `Ascending` ("미출석"이 "출석"보다 알파벳 앞 → 미출석 그룹 우선)
+
+**Column order** (아래 컬럼만 체크 ON):
+
+* 이름, 소속, 출석 상태, 테이블 번호
+
+**Actions 섹션:**
+
+* `직접출석처리` 체크 **ON**
+* `이미출석알림` 체크 **ON**
+* 나머지 모두 **OFF**
+
+**[Done]** → **⋯ → [Move to] → [Primary Navigation]**
+
+> ℹ️ 검색 방법: 상단 🔍 검색창에 입력 시 카드에 표시된 컬럼(이름·소속)을 기준으로 실시간 검색됩니다.
+
+---
+
+### 8단계: 내비게이션 순서 설정
+
+1. **[UX] → [Views]**
+2. 각 뷰의 **⋯ → [Move to] → [Primary Navigation]** 적용
+
+   | 순서 | 탭 | Position 설정 |
    | --- | --- | --- |
-   | Action name | `출석상태변경` | 이 Action의 이름 |
-   | For a record of this table | `설문지 응답 시트1` | 어떤 테이블의 행을 변경할 것인지 |
-   | Do this | `Data: set the values of some columns in this row` | 특정 컬럼 값을 바꾸는 Action |
+   | 1 | 홈 | `first` |
+   | 2 | 스캐너 | `next` |
+   | 3 | 직접출석 | `middle` |
 
-4. **[Add]** 버튼(Column Inputs 섹션의 **[+]**)을 클릭하여 변경할 컬럼을 추가합니다.
-   * 컬럼 선택: **`출석 상태`**
-   * 값(Value): **`"출석"`** (큰따옴표 포함하여 입력)
-5. **Position**: `Hide`를 선택합니다. (앱 화면에 버튼으로 표시하지 않음)
-6. **[Done]**을 클릭합니다.
-
-> ⚠️ 값을 입력할 때 반드시 **`"출석"`** (큰따옴표 포함)로 입력하세요.
-
-#### Action 2 — `자동출석트리거` (스캔 저장 시 Action 1을 자동 실행)
-
-1. 다시 **[+ New Action]** 버튼을 클릭합니다.
-2. 아래와 같이 입력합니다.
-
-   | 항목 | 입력값 | 설명 |
-   | --- | --- | --- |
-   | Action name | `자동출석트리거` | 이 Action의 이름 |
-   | For a record of this table | `ScanLogs` | ScanLogs에 새 행이 추가될 때 실행 |
-   | Do this | `Data: execute an action on a set of rows` | 다른 테이블의 행에 Action 실행 |
-   | Referenced Table | `설문지 응답 시트1` | Action을 실행할 대상 테이블 |
-   | Referenced Rows | `LIST([참가자찾기])` | 찾아낸 참가자 행 |
-   | Referenced Action | `출석상태변경` | 실행할 Action (방금 만든 Action 1) |
-   | Position | `Hide` | 앱 화면에 버튼 표시 안 함 |
-
-3. **[Done]**을 클릭합니다.
-
-> ℹ️ **동작 흐름**: QR 스캔 → `ScanLogs`에 새 행 추가 → `자동출석트리거` 실행 → `참가자찾기`로 해당 참가자를 `설문지 응답 시트1`에서 찾음 → `출석상태변경` Action이 그 참가자의 `출석 상태`를 `"출석"`으로 변경
+3. 시스템 자동 생성 뷰(`ScanLogs_Detail`, `ScanLogs_Form`, `설문지 응답 시트1_Detail` 등)는 **⋯ → [Move to] → [Reference Views]**로 이동해 탭에서 숨깁니다.
+4. **[Save]**
 
 ---
 
-### 5단계: 뷰(화면) 설정
+### 9단계: 앱 저장 및 배포
 
-AppSheet 뷰는 "사용자가 보는 화면"입니다. 이 단계에서는 세 가지 화면을 만들고, 하단 탭으로 연결합니다.
+1. 우측 상단 **[Save]** 클릭
+2. Deployment Check: 오류(빨간색)는 수정, 경고(노란색)는 무시해도 됩니다.
 
-```text
-앱 화면 구조
-├── 🏠 홈 (대시보드)       ← 기본 시작 화면: 실시간 출석 현황 차트
-│     └── [스캐너로 이동] 버튼
-└── 📷 스캐너             ← QR 스캔 화면
-```
+**무료 요금제 퍼실리테이터 접근 방법** (Free 플랜은 제작자 포함 최대 10명 무료):
 
-> ℹ️ AppSheet는 QR 스캔으로 Google Sheets Q열이 업데이트될 때마다 앱이 자동으로 데이터를 다시 불러옵니다. 홈 화면의 차트는 스캔할 때마다 실시간으로 갱신됩니다.
+* **방법 A** — 행사 당일 퍼실리테이터 스마트폰에 앱 오너 계정(`gm.sse.maju@gmail.com`)으로 AppSheet 로그인. 행사 후 로그아웃.
+* **방법 B** — **Manage → Deploy** → 앱 설치 링크 복사 → 퍼실리테이터에게 공유
 
----
-
-#### 5-1: 스캐너 뷰 설정 (QR 스캔 화면)
-
-1. 좌측 메뉴 **[UX]** → **[Views]**를 클릭합니다.
-2. 목록에서 **`ScanLogs_Form`** 뷰를 클릭합니다. (없으면 **[+ New View]** → View type: `Form` → Data: `ScanLogs` 선택)
-3. 뷰 이름을 **`스캐너`**로 변경합니다.
-4. **[Behavior]** 섹션을 펼칩니다.
-   * **Event Actions** → **Form Saved** 드롭다운에서 **`자동출석트리거`**를 선택합니다.
-5. **[Navigation]** 섹션을 펼칩니다.
-   * **Finish view**: **`스캐너`**를 선택합니다. (스캔 저장 후 같은 화면으로 복귀)
-6. **[Done]**을 클릭합니다.
-
----
-
-#### 5-2: 출석 현황 차트 뷰 설정
-
-QR 스캔 현황을 파이 차트로 보여주는 뷰입니다. 이 뷰는 홈 대시보드에 삽입됩니다.
-
-1. **[+ New View]** 버튼을 클릭합니다.
-2. 아래와 같이 설정합니다.
-
-   | 항목 | 설정값 |
-   | --- | --- |
-   | View name | `출석현황` |
-   | For this data | `설문지 응답 시트1` |
-   | View type | `Chart` |
-
-3. **View Options** 섹션에서 아래 항목을 순서대로 설정합니다.
-
-   **Chart type**: 아이콘 중 **`aggregate piechart`** 를 클릭합니다.
-
-
-   > ℹ️ AppSheet에는 "Bar" 차트가 없습니다. 출석 비율 확인에는 `aggregate piechart`, 도넛 형태를 원하면 `aggregate donutchart`를 선택하세요.
-
-   **Group aggregate**: **`COUNT`** 선택
-
-   **Chart columns**: **[Add]** 버튼을 클릭 → **`출석 상태`** 선택
-
-   **Label type**: **`Value`** 선택
-
-   > ⚠️ 기본값을 **반드시 `Value`로 변경**하세요. 현장에서는 "75%" 보다 "15명 출석"처럼 실제 인원 수가 훨씬 유용합니다.
-
-   **Show legend**: **ON** (출석/미출석 레이블이 차트 옆에 표시됨)
-
-4. **Position**: **`middle`** 또는 하단 탭에서 원하는 위치를 선택합니다.
-5. **[Done]**을 클릭합니다.
-
-> ℹ️ **차트 읽는 법**: **출석** 영역 = QR 스캔 완료 인원, **미출석** 영역 = 아직 미스캔 인원. 합계 = 총 신청자 수.
-
----
-
-#### 5-3: 홈 대시보드 뷰 설정
-
-출석 현황 차트와 스캐너 바로가기를 한 화면에 모아 보여주는 홈 화면입니다.
-
-1. **[+ New View]** 버튼을 클릭합니다.
-2. 아래와 같이 설정합니다.
-
-   | 항목 | 설정값 |
-   | --- | --- |
-   | View name | `홈` |
-   | View type | `Dashboard` |
-
-3. **Dashboard Slices** 섹션에서 **[+ Add slice]**를 클릭하여 슬라이스를 추가합니다.
-
-   **Slice 1 — 출석 현황 차트**
-
-   | 항목 | 설정값 |
-   | --- | --- |
-   | View | `출석현황` |
-   | Size | `Large` |
-   | Position | Top (첫 번째) |
-
-   **Slice 2 — 스캐너 이동 버튼**
-
-   **[+ Add slice]**를 다시 클릭합니다.
-
-   | 항목 | 설정값 |
-   | --- | --- |
-   | View | `스캐너` |
-   | Size | `Small` |
-   | Position | Bottom (두 번째) |
-
-4. **Show in**: `Primary` — 홈 화면은 하단 탭에 표시합니다.
-5. **[Done]**을 클릭합니다.
-
-> ✅ 대시보드 화면에 차트와 스캐너 뷰 미리보기가 나란히 보이면 설정 완료입니다. 스캐너 슬라이스를 탭하면 스캐너 화면으로 이동합니다.
-
----
-
-#### 5-4: 하단 내비게이션(탭) 순서 설정
-
-앱 하단 탭의 순서를 `홈 → 스캐너`로 정렬하여 앱 시작 시 대시보드가 기본으로 열리게 합니다.
-
-1. **[UX]** → **[Navigation]** (또는 **[Primary Navigation]**)을 클릭합니다.
-2. 뷰 목록에서 **`홈`**을 맨 위로 드래그합니다.
-3. **`스캐너`**를 두 번째로 정렬합니다.
-4. 나머지 자동 생성된 뷰들은 `Do not show`로 설정하거나 목록에서 제거합니다.
-5. **[Save]**를 클릭합니다.
-
-> ✅ **최종 확인**: 미리보기 패널에서 앱이 `홈(대시보드)` 화면으로 시작하고, 하단에 `홈`과 `스캐너` 탭 두 개가 보이면 완료입니다.
-
----
-
-### 6단계: 앱 저장 및 배포
-
-1. 화면 우측 상단의 **[Save]** 버튼을 클릭하여 앱을 저장합니다.
-2. AppSheet가 자동으로 앱을 배포(Deploy)합니다. 첫 배포 후 에러 경고창이 뜰 수 있습니다.
-   * **Deployment Check** 결과에 오류(빨간색)가 있으면 내용을 확인하고 수정하세요.
-   * 경고(노란색)는 무시해도 됩니다.
-
-> ✅ **확인**: 화면 오른쪽 미리보기(Preview) 패널에서 스마트폰 화면이 보이면 앱 생성 성공입니다.
-
-#### Free 요금제에서 퍼실리테이터 접근 허용 방법
-
-AppSheet 공식 문서([Use AppSheet for free](https://support.google.com/appsheet/answer/10104499)) 기준:
-
-> "AppSheet is free for **prototype development and testing**. Up to **10 users** (including the creator) can access the app at no cost."
-
-즉, 앱이 **프로토타입(테스트) 상태**이면 제작자 포함 최대 10명이 무료로 사용할 수 있습니다. 퍼실리테이터가 "User signin not allowed" 오류를 만나면 아래 방법을 시도하세요.
-
-![AppSheet 무료 사용 정책 공식 문서](appsheet-doc-free-plan.png)
-
-##### 방법 A — 앱 오너 계정 공유 (가장 빠름)
-
-현장 당일, 퍼실리테이터 스마트폰에 앱 오너 계정(`gm.sse.maju@gmail.com`)으로 AppSheet에 로그인합니다. 행사 후 로그아웃하면 됩니다. 별도 설정 없이 즉시 사용 가능합니다.
-
-##### 방법 B — 앱 설치 링크로 테스터 초대 (각자 본인 계정 사용)
-
-1. AppSheet 편집 화면 상단의 공유 아이콘(👤+) 또는 **Manage > Deploy**에서 **앱 설치 링크(install link)**를 복사합니다.
-2. 퍼실리테이터에게 링크를 공유합니다. (카카오톡, 이메일 등)
-3. 퍼실리테이터가 링크를 열고 **본인 구글 계정**으로 로그인하면 앱이 설치됩니다.
-4. 오류가 계속 발생하면 앱이 프로토타입 상태인지 확인합니다. **Manage > Deploy**에서 "Deployment Check"를 통과하기 전 상태(프로토타입)여야 합니다.
-
-> ℹ️ **Collaborate & Publish 화면**은 사용자 초대가 아닌 앱 복사/샘플 공유용입니다 (아래 참고).
-
-![AppSheet Collaborate & Publish 화면](publish01-TeamWork.png)
+![AppSheet Collaborate 화면](publish01-TeamWork.png)
 
 > ⚠️ AppSheet UI 및 정책은 지속적으로 변경됩니다. 최신 정보는 [AppSheet 공식 문서](https://support.google.com/appsheet/answer/10104499)를 확인하세요.
 
 ---
 
-### 7단계: 퍼실리테이터 스마트폰 설치 및 테스트
+### 10단계: 스마트폰 설치 및 테스트
 
-#### 앱 설치
+1. AppSheet 앱 설치 (iOS: App Store / Android: Play Store)
+2. 앱 오너 계정 또는 초대된 계정으로 로그인 → `마주센터 출석체크` 앱 선택
 
-1. 행사 당일 출석 체크를 담당할 퍼실리테이터의 스마트폰에서 **AppSheet** 앱을 설치합니다.
-   * iOS: App Store에서 "AppSheet" 검색
-   * Android: Play Store에서 "AppSheet" 검색
-2. 앱 오너 계정 또는 퍼실리테이터 본인 계정(접근 허용된 경우)으로 AppSheet에 로그인합니다.
-3. 앱 목록에서 **`마주센터 출석체크`** 앱을 탭합니다.
+**QR 스캔 테스트:**
 
-#### 테스트 스캔
+1. 하단 탭 **[스캐너]** → `체크인코드` 입력창 탭
+2. 오른쪽 📷 아이콘 탭 (PC 브라우저에서 안 보이는 것은 정상)
+3. QR 코드 스캔 → `홍길동|hong@example.com` 형식 자동 입력, `스캔된 이름: 홍길동` 표시 확인
+4. **[Save]** → 구글 시트 `출석 상태` 열이 **출석**으로 변경됐는지 확인
 
-1. 앱에서 **[스캐너]** (또는 `ScanLogs_Form`) 메뉴를 탭합니다.
-2. **[체크인코드]** 입력창을 탭합니다. 오른쪽에 QR 코드 모양 아이콘(📷)이 보여야 합니다.
-3. 아이콘을 탭하면 카메라가 켜집니다. 참가자가 이메일로 받은 QR 코드를 카메라로 비춥니다.
-4. QR 스캔이 되면 `체크인코드` 필드에 `홍길동|hong@example.com` 형식의 텍스트가 자동 입력되고, `스캔된성명` 필드에는 `홍길동`만 표시됩니다.
-5. **[Save]** 버튼을 탭합니다.
-6. 구글 스프레드시트 `설문지 응답 시트1`에서 해당 참가자의 Q열(`출석 상태`)이 **출석**으로 바뀌었는지 확인합니다.
+**직접 출석 테스트:**
 
-> ⚠️ **자주 발생하는 문제**
->
-> | 증상 | 원인 | 해결 방법 |
-> | --- | --- | --- |
-> | Q열이 Y로 안 바뀐다 | `자동출석트리거` Action이 연결 안 됨 | 5단계에서 Form Saved에 `자동출석트리거` 선택 확인 |
-> | `참가자찾기`가 빈값 | App formula 수식 오타 | `[체크인코드]` 참조 및 `\|` 파이프 문자가 맞는지 확인 |
-> | QR 아이콘이 안 보인다 | PC 브라우저 사용 중 | 스마트폰 앱에서만 표시됨 (정상) |
-> | `출석 상태`가 `출석` 대신 `TRUE`로 기록 | Action 값 설정 오류 | Action 1에서 값을 `"출석"` (큰따옴표 포함)로 입력 |
-> | 앱이 목록에 안 보인다 | 다른 계정으로 로그인 중 | 앱을 만든 구글 계정으로 다시 로그인 |
-> | "User signin not allowed" 오류 | Free 요금제 제한 | 6단계의 방법 A(계정 공유) 또는 방법 B(설치 링크) 참고 |
+1. 하단 탭 **[직접출석]** → 검색창에 이름 입력
+2. 미출석 카드의 **[출석]** 탭 → 확인 → `참가자 상세` 화면에서 출석 상태 확인
+3. 이미 출석 카드의 **[✓ 출석]** 탭 → "이미 출석 처리된 참가자입니다." 알림 확인
+4. 참가자 상세 화면의 **[출석 취소]** 탭 → 미출석으로 되돌아가는지 확인
 
 ---
 
-> 💡 **운영 흐름 전체**: 행사 전날 `sendFinalNoticeWithQR` 실행 → Q열 `"미출석"` 초기화 + QR 메일 발송 → 행사 당일 AppSheet QR 스캔 → Q열 `"출석"` 업데이트 → 행사 후 `사후 감사/안내 메일 발송` 실행 → Q열 값 기준으로 참석자/불참자 자동 분류 발송
+### 자주 발생하는 문제 (FAQ)
+
+| 증상 | 원인 | 해결 방법 |
+| --- | --- | --- |
+| QR 아이콘이 안 보인다 | PC 브라우저 사용 중 | 스마트폰 AppSheet 앱에서만 표시됨 (정상) |
+| `체크인코드 cannot be scanned (Hidden)` | 체크인코드 Show가 OFF | 5-B에서 체크인코드 Show를 **ON**으로 변경 |
+| 출석 상태가 `TRUE`로 저장됨 | Action 값 따옴표 누락 | Column Inputs 값을 `"출석"` (큰따옴표 포함)으로 수정 |
+| Q열(출석 상태)이 바뀌지 않는다 | `자동출석트리거` Form Saved 미연결 | 스캐너 뷰 Behavior → Form Saved에 `자동출석트리거` 선택 |
+| `참가자찾기` 저장 시 DateTime 타입 오류 | `타임스탬프`가 Key로 설정됨 | 5-A에서 `타임스탬프` Key OFF, `이메일주소` Key ON 후 저장 |
+| `_RowNumber` Slice 오류 | Slice columns 특정 컬럼 선택 | Slice columns [Add] 하지 않고 기본값(모든 컬럼) 유지 |
+| [출석] / [✓ 출석] 버튼이 안 보인다 | 직접출석 뷰 Actions 미설정 | 직접출석 뷰 Actions에서 `직접출석처리`, `이미출석알림` 체크 ON |
+| [출석 취소] 버튼이 안 보인다 | 참가자 상세 뷰 Actions 미설정 | 참가자 상세 뷰 Actions에서 `출석취소`만 체크 ON |
+| 스캐너가 Dashboard에 안 들어간다 | Form 뷰는 Dashboard 임베드 불가 | 정상 — 스캐너는 하단 내비게이션 탭으로 접근 |
+| "User signin not allowed" | Free 요금제 접근 제한 | 방법 A(계정 공유) 또는 방법 B(설치 링크) 참고 |
+| 앱이 목록에 안 보인다 | 다른 계정으로 로그인 | 앱 오너 계정으로 재로그인 |
+
+---
+
+> 💡 **전체 운영 흐름**: 행사 전날 `sendFinalNoticeWithQR` 실행 → 출석 상태 "미출석" 초기화 + QR 메일 발송 → 행사 당일 QR 스캔 또는 직접 출석 처리 → 행사 후 `사후 감사/안내 메일 발송` 실행 → 출석/미출석 자동 분류 발송
 
 ---
 
